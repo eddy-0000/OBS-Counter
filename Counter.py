@@ -72,7 +72,7 @@ def script_update(settings):
 def script_properties():
     props = obs.obs_properties_create()
     
-    obs.obs_properties_add_text(props, "counter_name", "Counter name", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_text(props, "counter_name", "Counter Name", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_bool(props,"sound_bool","Sound On?")
     obs.obs_properties_add_int_slider(props,"counter","Counter",0,1000,1) 
     text_source = obs.obs_properties_add_list(props,"text_source","Text Source",obs.OBS_COMBO_TYPE_EDITABLE,obs.OBS_COMBO_FORMAT_STRING,)
@@ -132,7 +132,7 @@ def update_counter(visible, status, counter, text_source, sound_source, sound_on
         '''Updates the death counter.'''
         current_scene = obs.obs_frontend_get_current_scene()
         source_visibility(get_fitting_scene(text_source), text_source, visible)
-        update_text(text_source, f"{counter_name}: {counter}")
+        update_text(text_source, f"{counter_name} {counter}")
         obs.obs_source_release(current_scene)
         if status > 0 and sound_on:
             #start a seperate thread to play sounds, that way
