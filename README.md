@@ -1,5 +1,7 @@
 # OBS-Counter
 
+UPDATE: Twitch chat can now increase and decrease the timer as well.
+
 This script allows you to add a counter to your streams/recording in OBS.
 It allows you to decrease/increase the counter via hotkey which are set in the hotkey settings in OBS.
 Optionally a sound effect can also be assigned to the counter when it is increased.

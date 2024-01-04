@@ -1,6 +1,15 @@
 import obspython as obs
 from threading import Thread
 import time
+import socket
+from pprint import pprint
+
+oauth       = ""
+nick_name   = ""
+channel     = ""
+addr        = "irc.chat.twitch.tv"
+port        = 6667
+sock = None
 
 class Hotkey:
     '''Handles the hotkey in OBS settigns. _id = id of the hotkey.'''
@@ -47,6 +56,9 @@ counter = 0
 text_source = ""
 sound_source = ""
 counter_name = "Counter"
+current_counter_command = "!counter"
+increase_counter_command = "!counter+"
+decrease_counter_command = "!counter-"
 sound_on = False
 h01 = HotkeyDataHolder()
 h02 = HotkeyDataHolder()
@@ -54,7 +66,11 @@ h02 = HotkeyDataHolder()
 def script_description():
 	return "<b>Counter</b>" + \
 			"<hr>" + \
-			"You can select a Hotkey to assign the increase and decrease counter to in the settings menu under Hotkeys."
+			"You can select a Hotkey to assign the increase and decrease counter to in the settings menu under Hotkeys." +\
+            "<hr>" + \
+            "Twitch chat can also increase the counter by simply typing the assigned commands." + \
+            "<hr>" + \
+            "To get an Oauth token go to: <b>https://twitchapps.com/tmi/</b>."
 
 def script_update(settings):
     global counter
@@ -62,6 +78,13 @@ def script_update(settings):
     global sound_source
     global sound_on
     global counter_name
+    global current_counter_command
+    global increase_counter_command
+    global decrease_counter_command
+
+    current_counter_command = obs.obs_data_get_string(settings, "current_counter")
+    increase_counter_command = obs.obs_data_get_string(settings, "increase_counter")
+    decrease_counter_command = obs.obs_data_get_string(settings, "decrease_counter")
 
     sound_source = obs.obs_data_get_string(settings, "sound_source")
     counter_name = obs.obs_data_get_string(settings, "counter_name")
@@ -69,8 +92,26 @@ def script_update(settings):
     counter = obs.obs_data_get_int(settings,"counter")
     text_source = obs.obs_data_get_string(settings, "text_source")
 
+    update_counter(True, 0, counter, text_source, sound_source, sound_on)
+
+    setSetting(obs.obs_data_get_string(settings, "channel").lower(),obs.obs_data_get_string(settings, "user").lower(), obs.obs_data_get_string(settings, "oauth").lower())
+
+
 def script_properties():
     props = obs.obs_properties_create()
+
+    channel = obs.obs_properties_add_text(props, "channel", "Channel", obs.OBS_TEXT_DEFAULT)
+    obs.obs_property_set_long_description(channel, "This is the channel to which you want to connect to.")
+    user = obs.obs_properties_add_text(props, "user", "User", obs.OBS_TEXT_DEFAULT)
+    obs.obs_property_set_long_description(user, "This is the channel you want to use to connect to the chat room to (channel and user can be the same)")
+    obs.obs_properties_add_text(props, "oauth", "Oauth", obs.OBS_TEXT_PASSWORD)
+    obs.obs_properties_add_text(props, "current_counter", "Current Counter Command", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_text(props, "increase_counter", "Increase Counter Command", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_text(props, "decrease_counter", "Decrease Counter Command", obs.OBS_TEXT_DEFAULT)
+
+    obs.obs_properties_add_button(props, "start_bot", "Start Bot", start_bot)
+    obs.obs_properties_add_button(props, "restart_bot", "Restart Bot", restart_bot)
+    obs.obs_properties_add_button(props, "shutdown_bot", "Shutdown Bot", shutdown_bot)
     
     obs.obs_properties_add_text(props, "counter_name", "Counter Name", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_bool(props,"sound_bool","Sound On?")
@@ -102,6 +143,32 @@ def script_properties():
 
     return props
 
+def start_bot(prop, props):
+    thread = Thread(target=bot)
+    thread.start()
+
+def restart_bot(prop, props):
+    try:
+        sock.close()
+    except:
+        pass
+    thread = Thread(target=bot)
+    thread.start()
+
+def shutdown_bot(prop, props):
+    try:
+        sock.close()
+    except:
+        pass
+
+def setSetting(new_channel, new_nick, new_oauth):
+    '''Sets the Twitch server settings.'''
+    global channel
+    global nick_name
+    global oauth
+    channel = new_channel
+    nick_name = new_nick
+    oauth = new_oauth
 
 def script_load(settings):
     '''Loads data upon opening the script'''
@@ -186,3 +253,159 @@ def update_text(text_source, new_text):
     obs.obs_source_update(source, settings)            #updates the text
     obs.obs_data_release(settings)
     obs.obs_source_release(source)
+
+def bot():  
+    '''This function starts the bot and handles all twitch related functions. Run this in a thread.'''
+    global sock
+    sock = socket.socket()
+    
+    reconnect() #reconnect to server incase a prior connection has been lost
+
+    global startTime
+
+    message = ""
+    #check for incoming messages
+    while True:
+        data = recv(sock, 1024) #extract msg from server
+        pprint(data)
+        message = parseMessageData(data)  #extracts the received message
+        checkPing(sock, data)               #check if the twitch has requested a PONG message
+        ####################################################################################################
+        message = chatCommands(sock, message, data) #checks if the received message is a command
+        time.sleep(1)   #time speed of received msg
+
+def reconnect():
+    '''reconnects/connects to the socket/twitch'''
+    try:
+        sock.connect((addr, port))  #connect to server
+        #send login information
+        send(sock, f"PASS {oauth}")
+        send(sock, f"NICK {nick_name}")
+        send(sock, f"CAP REQ :twitch.tv/tags twitch.tv/membership")
+        send(sock, f"JOIN #{channel}")  #join specified channels chat
+        print("Succesfully connected")
+    except Exception as e:
+        print("Connection failed or already connected")
+        print(e)
+
+def checkPing(sock, msg):
+    '''Checks if a PING message has been received and responds with a PONG message.'''
+    if 'PING' in msg:                   #if PING in msg then...
+        data = msg.split(":")[1]        #extract message from PING msg
+        send(sock, f"PONG :{data}") 
+    else:
+        pass
+
+def send(sock, msg):
+    '''Sends a message to the server.'''
+    sock.send(bytes(msg + "\n", "ASCII"))
+
+def recv(sock, buff_size):
+    '''Receives and returns the msg from the server.'''
+    return sock.recv(buff_size).decode("UTF-8")
+
+def parseMessageData(msg):
+        '''Extracts the chat message. TODO: links are not being extracted correctly.'''
+        data    = msg.split(":")   #remove everything from the string until the second ":" has been reached
+        for index, x in enumerate(data):
+            if 'PRIVMSG' in x:
+                msg    = data[index+1]
+                msg    = msg.replace('\r\n','')
+                return msg
+            else:
+                pass
+        pass
+
+def chatCommands(sock, msg, data): 
+    '''Checks and executes commands from chat users.'''
+    global nick_name
+    global counter
+    global current_counter_command
+    global increase_counter_command
+    global decrease_counter_command
+    if nick_name != parse_name_data(data):
+        if msg == None:
+            return ""
+        ###########################################commands###########################################
+        elif msg.lower() == current_counter_command.lower():
+            send(sock, f"@reply-parent-msg-id={get_message_id(data)} PRIVMSG #{channel} : Current count is: {counter}") #change reply message here
+        elif msg.lower() == increase_counter_command.lower():
+            counter = counter + 1
+            update_counter(True, 1, counter, text_source, sound_source, sound_on)
+            send(sock, f"@reply-parent-msg-id={get_message_id(data)} PRIVMSG #{channel} : Current count: {counter}") #change reply message here
+        elif msg.lower() == decrease_counter_command.lower():
+            counter = counter - 1
+            update_counter(True, -1, counter, text_source, sound_source, sound_on)
+            send(sock, f"@reply-parent-msg-id={get_message_id(data)} PRIVMSG #{channel} : Current count: {counter}") #change reply message here
+            
+def update_counter(visible, death_status, deaths, death_source, death_sound_source, sound_on):
+        '''Updates the death counter.'''
+        current_scene = obs.obs_frontend_get_current_scene()
+        source_visibility(get_fitting_scene(death_source), death_source, visible)
+        update_text(death_source, f"Deaths: {deaths}")
+        obs.obs_source_release(current_scene)
+
+        if death_status > 0 and sound_on:
+            #start a seperate thread to play sounds, that way
+            thread = Thread(target=play_sound, args=(get_fitting_scene(death_sound_source), death_sound_source)) #plays a sound effect
+            thread.start()
+
+def get_message_id(msg):
+        '''Gets the id of the message (needed to reply to a message, see twitch client-server documentation for futher info).'''
+        if 'PRIVMSG' in msg:                #if of PRIVMSG type...
+            data    = msg.split(";")   #remove everything from the string until the second ":" has been reached
+            for x in data:
+                if 'id=' in x:
+                    data    = x.replace('id=','')
+                    return data
+                else:
+                    pass
+        else:
+            pass
+
+def is_user_mod(msg):
+    '''Checks if the user is a mod. Returns True if a mod.'''
+    if 'PRIVMSG' in msg:                #if of PRIVMSG type...
+        data    = msg.split(";")   #remove everything from the string until the second ":" has been reached
+        for x in data:
+            if 'mod=' in x:
+                data    = x.replace('mod=','')
+                return data is 1
+            else:
+                pass
+    else:
+        return False
+
+def parseMessageData(msg):
+    '''Extracts the chat message. TODO: links are not being extracted correctly.'''
+    data    = msg.split(":")   #remove everything from the string until the second ":" has been reached
+    for index, x in enumerate(data):
+        if 'PRIVMSG' in x:
+            msg    = data[index+1]
+            msg    = msg.replace('\r\n','')
+            return msg
+        else:
+            pass
+    pass
+
+def parse_name_data(msg):
+    '''Extracts the user name of a chatter.'''
+    if 'PRIVMSG' in msg: #if of PRIVMSG type...
+        data    = msg.split(":")   #remove everything from the string until the second ":" has been reached
+        for x in data:
+            if 'PRIVMSG' in x:
+                data    = x
+                index   = x.index("!")
+                return data[0:index]
+            else:
+                pass
+    else:
+        pass
+
+def slicer(my_str,sub):
+    '''Cuts the beginning portion of my_str until the sub string has been reached.'''
+    index = my_str.find(sub)
+    if index !=-1 :
+            return my_str[index:] 
+    else :
+            print('Sub string not found!')
